@@ -1,19 +1,64 @@
-export type EngineKind = "native" | "hls";
+export type EngineKind = "mpegts" | "hls" | "native";
 
 export interface EngineHandle {
   kind: EngineKind;
   destroy: () => void;
 }
 
+export function pickEngine(url: string, ext: string, isLive: boolean): EngineKind {
+  const u = url.toLowerCase();
+  const e = ext.toLowerCase().replace(/^\./, "");
+
+  if (u.includes(".m3u8") || e === "m3u8") return "hls";
+  if (isLive || e === "ts") return "mpegts";
+
+  return "native";
+}
+
 export async function attach(
   video: HTMLVideoElement,
   opts: { url: string; ext: string; isLive: boolean }
 ): Promise<EngineHandle> {
-  const u = opts.url.toLowerCase();
-  const e = opts.ext.toLowerCase().replace(/^\./, "");
+  const kind = pickEngine(opts.url, opts.ext, opts.isLive);
 
-  // Si c'est un flux HLS (ex: VOD/Série m3u8 ou stream explicite), on conserve HLS.js
-  if (u.includes(".m3u8") || e === "m3u8") {
+  // Moteur MSE Live (Laisse le flux brut du fournisseur, demux en mémoire browser)
+  if (kind === "mpegts") {
+    const mpegts = (await import("mpegts.js")).default;
+    if (mpegts.getFeatureList().mseLivePlayback || mpegts.isSupported()) {
+      const player = mpegts.createPlayer(
+        {
+          type: "mpegts",
+          isLive: true,
+          url: opts.url,
+        },
+        {
+          enableStashBuffer: false,        // Pas de stockage serveur/buffer
+          stashInitialSize: 0,              // Démarrage instantané
+          lazyLoad: false,
+          liveBufferLatencyChasing: true,  // Garde le direct parfait
+          autoCleanupSourceBuffer: true,   // Libère la RAM en continu
+        }
+      );
+
+      player.attachMediaElement(video);
+      player.load();
+      player.play().catch(() => {});
+
+      return {
+        kind: "mpegts",
+        destroy: () => {
+          try {
+            player.unload();
+            player.detachMediaElement();
+            player.destroy();
+          } catch {}
+        },
+      };
+    }
+  }
+
+  // Fallback HLS (pour playlists M3U8 VOD/Séries si besoin)
+  if (kind === "hls") {
     const Hls = (await import("hls.js")).default;
     if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true });
@@ -24,7 +69,7 @@ export async function attach(
     }
   }
 
-  // Pour le Live (.ts) ainsi que les VOD/Séries (.mp4 / .mkv) : lecture directe HTML5 native sans parser JS
+  // Native MP4 pour VOD & Films
   video.src = opts.url;
   video.load();
   video.play().catch(() => {});
