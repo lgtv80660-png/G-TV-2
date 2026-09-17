@@ -35,11 +35,16 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
         enableWorker: true,
         lowLatencyMode: true,
         backBufferLength: 60,
+        // CORRECTION CLÉ : Forcer hls.js à faire passer TOUS les segments .ts par le proxy /api/stream
         xhrSetup: (xhr, url) => {
-          // Interception pour forcer tous les segments TS à passer par /api/stream
-          if (url.includes("/api/hls") || url.includes("/api/hlsseg")) {
-            const cleanTarget = url.replace(/.*\/api\/(hls|hlsseg)\?url=/, "");
-            xhr.open("GET", `/api/stream?url=${cleanTarget}`, true);
+          // Si l'URL demandée ne pointe pas déjà vers /api/stream, on la réécrit
+          if (!url.includes("/api/stream")) {
+            // Extraction de l'URL cible
+            let cleanUrl = url;
+            if (url.includes("/api/hls")) {
+              cleanUrl = url.replace(/.*\/api\/(hls|hlsseg)\?url=/, "");
+            }
+            xhr.open("GET", `/api/stream?url=${encodeURIComponent(cleanUrl)}`, true);
           }
         },
       });
@@ -66,7 +71,7 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
         }
       });
     } else {
-      // Direct stream pour les VOD / Séries (MP4/MKV)
+      // Direct stream pour VOD / Séries
       video.src = rawSourceUrl;
       video
         .play()
