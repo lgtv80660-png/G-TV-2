@@ -4,17 +4,19 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { Tv, Maximize, LayoutGrid, ChevronDown, Check, Search } from "lucide-react";
 import { useLiveCategories, useLiveStreams } from "@/lib/hooks";
+import { SmartImage } from "@/components/ui/SmartImage";
 import { useUI, DEFAULT_FILTER } from "@/store/ui";
 import { sortItems, cleanName, cn } from "@/lib/utils";
-import { VideoPlayer } from "@/components/player/VideoPlayer";
 import type { LiveStream } from "@/lib/xtream/types";
 
 export function LiveBrowser() {
+  // 1. Récupération et filtrage des catégories (Exclusion de "Free TV")
   const { data: allCats = [] } = useLiveCategories();
   const cats = useMemo(() => {
     return allCats.filter((c) => !c.category_name.toLowerCase().includes("free"));
   }, [allCats]);
 
+  // 2. Gestion de l'état (Filtres et sélection)
   const filter = useUI((s) => s.filters.live ?? DEFAULT_FILTER);
   const patchFilter = useUI((s) => s.patchFilter);
   const category = filter.category || "all";
@@ -22,10 +24,12 @@ export function LiveBrowser() {
 
   const setCategory = (id: string) => patchFilter("live", { category: id });
 
+  // État local pour le popover de catégories mobile
   const [isCatOpen, setIsCatOpen] = useState(false);
   const [catSearch, setCatSearch] = useState("");
   const popoverRef = useRef<HTMLDivElement>(null);
 
+  // Fermeture du popover au clic extérieur
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
@@ -46,8 +50,10 @@ export function LiveBrowser() {
     return cats.find((c) => c.category_id === category)?.category_name || "All categories";
   }, [category, cats]);
 
+  // État local pour la chaîne sélectionnée
   const [activeChannel, setActiveChannel] = useState<LiveStream | null>(null);
 
+  // 3. Récupération et filtrage des chaînes
   const { data, isLoading } = useLiveStreams(category === "all" ? undefined : category);
 
   const filtered = useMemo(() => {
@@ -57,20 +63,15 @@ export function LiveBrowser() {
     return sortItems(items, sort);
   }, [data, query, sort]);
 
-  // Forcer ext=m3u8 vers /api/stream pour les lives
-  const liveSources = useMemo(() => {
-    if (!activeChannel?.stream_id) return [];
-    return [`/api/stream?type=live&id=${activeChannel.stream_id}&ext=m3u8`];
-  }, [activeChannel]);
-
-  const watchDedicatedUrl = activeChannel
-    ? `/watch?type=live&id=${activeChannel.stream_id}&ext=m3u8&title=${encodeURIComponent(cleanName(activeChannel.name))}`
-    : "#";
+  // Génération de l'URL du lecteur Lumen
+  const watchUrl = activeChannel
+    ? `/watch?type=live&id=${activeChannel.stream_id}&ext=ts&title=${encodeURIComponent(cleanName(activeChannel.name))}`
+    : null;
 
   return (
     <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-80px)] w-full overflow-hidden border-t border-white/5">
       
-      {/* Mobile Category Dropdown */}
+      {/* BARRE POPUP CATÉGORIES (Mobile Uniquement : md:hidden) */}
       <div className="block md:hidden p-3 border-b border-white/5 relative z-40" ref={popoverRef}>
         <button
           onClick={() => setIsCatOpen(!isCatOpen)}
@@ -132,7 +133,7 @@ export function LiveBrowser() {
         )}
       </div>
 
-      {/* Colonne 1: Catégories (Desktop) */}
+      {/* COLONNE 1 : Catégories (Web Uniquement : hidden md:flex) */}
       <div className="hidden md:flex w-1/4 max-w-[280px] shrink-0 border-r border-white/5 bg-ink-900/50 flex-col">
         <div className="p-4 border-b border-white/5 font-semibold text-fog-200">Catégories</div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -140,7 +141,7 @@ export function LiveBrowser() {
             onClick={() => setCategory("all")}
             className={cn(
               "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors",
-              category === "all" ? "bg-iris-500/20 text-iris-400 font-bold" : "hover:bg-ink-800 text-fog-400"
+              category === "all" ? "bg-iris-500/20 text-iris-400" : "hover:bg-ink-800 text-fog-400"
             )}
           >
             Toutes les chaînes
@@ -151,7 +152,7 @@ export function LiveBrowser() {
               onClick={() => setCategory(c.category_id)}
               className={cn(
                 "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate",
-                category === c.category_id ? "bg-iris-500/20 text-iris-400 font-bold" : "hover:bg-ink-800 text-fog-400"
+                category === c.category_id ? "bg-iris-500/20 text-iris-400" : "hover:bg-ink-800 text-fog-400"
               )}
             >
               {c.category_name}
@@ -160,7 +161,7 @@ export function LiveBrowser() {
         </div>
       </div>
 
-      {/* Colonne 2: Liste des Chaînes */}
+      {/* COLONNE 2 : Chaînes (Liste verticale) */}
       <div className="w-full md:w-1/3 md:min-w-[300px] md:shrink-0 border-r border-white/5 bg-ink-900/30 flex flex-col h-[320px] md:h-full">
         <div className="p-4 border-b border-white/5 flex items-center justify-between">
           <span className="font-semibold text-fog-200">Chaînes</span>
@@ -178,12 +179,24 @@ export function LiveBrowser() {
                 onClick={() => setActiveChannel(c)}
                 className={cn(
                   "w-full flex items-center gap-3 p-2 rounded-lg transition-colors text-left",
-                  activeChannel?.stream_id === c.stream_id ? "bg-ink-800 border border-iris-500/30" : "hover:bg-ink-850"
+                  activeChannel?.stream_id === c.stream_id ? "bg-ink-800" : "hover:bg-ink-850"
                 )}
               >
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-ink-950 overflow-hidden border border-white/5">
-                  <Tv className="h-5 w-5 text-fog-600" />
-                </div>
+<div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-ink-950 overflow-hidden border border-white/5">
+  {c.stream_icon ? (
+    <img
+      src={c.stream_icon.startsWith("http://") ? `/api/image-proxy?url=${encodeURIComponent(c.stream_icon)}` : c.stream_icon}
+      alt={c.name}
+      className="h-full w-full object-contain p-1"
+      onError={(e) => {
+        // En cas d'erreur de chargement, remplace par l'icône TV
+        (e.target as HTMLElement).style.display = "none";
+        (e.target as HTMLElement).nextElementSibling?.classList.remove("hidden");
+      }}
+    />
+  ) : null}
+  <Tv className={`h-5 w-5 text-fog-600 ${c.stream_icon ? "hidden" : ""}`} />
+</div>
                 <span className="truncate text-sm font-medium text-fog-200 flex-1">{cleanName(c.name)}</span>
               </button>
             ))
@@ -191,36 +204,36 @@ export function LiveBrowser() {
         </div>
       </div>
 
-      {/* Colonne 3: Zone du Lecteur */}
-      <div className="flex-1 bg-ink-950 flex flex-col items-center justify-center p-4 md:p-6 overflow-hidden">
+      {/* COLONNE 3 : Aperçu du Player */}
+      <div className="flex-1 bg-ink-950 flex flex-col p-4 md:p-6">
         {activeChannel ? (
-          <div className="w-full max-w-5xl flex flex-col items-center justify-center space-y-4">
-            <div className="relative w-full aspect-video max-h-[70vh] bg-black rounded-xl overflow-hidden border border-white/10 shadow-2xl group flex items-center justify-center">
-              <VideoPlayer
-                key={activeChannel.stream_id}
-                sources={liveSources}
-                ext="m3u8"
-                isLive={true}
-                title={cleanName(activeChannel.name)}
+          <div className="w-full max-w-5xl mx-auto space-y-4">
+            <div className="aspect-video w-full bg-black rounded-xl overflow-hidden relative border border-white/10 shadow-2xl group">
+              <iframe
+                src={watchUrl!}
+                className="w-full h-full pointer-events-none"
+                allow="autoplay; fullscreen"
               />
               <Link
-                href={watchDedicatedUrl}
-                className="absolute top-3 right-3 bg-black/60 hover:bg-iris-500 text-white hover:text-ink-950 p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm z-20"
-                title="Plein écran"
+                href={watchUrl!}
+                className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
               >
-                <Maximize className="h-4 w-4" />
+                <div className="bg-iris-500 text-ink-950 px-6 py-3 rounded-full font-bold flex items-center gap-2 transform hover:scale-105 transition-transform">
+                  <Maximize className="h-5 w-5" />
+                  Regarder en plein écran
+                </div>
               </Link>
             </div>
 
-            <div className="w-full text-left px-2">
+            <div className="px-2">
               <h2 className="text-xl md:text-2xl font-bold text-white">{cleanName(activeChannel.name)}</h2>
-              <p className="text-fog-400 mt-1 text-xs md:text-sm">Cliquez sur le bouton en haut à droite pour basculer en plein écran.</p>
+              <p className="text-fog-400 mt-1 text-xs md:text-sm">Cliquez sur la vidéo pour basculer vers le lecteur complet.</p>
             </div>
           </div>
         ) : (
           <div className="h-[220px] md:h-full flex flex-col items-center justify-center text-fog-500 space-y-4">
             <Tv className="h-12 md:h-16 w-12 md:w-16 opacity-20" />
-            <p className="text-xs md:text-sm">Sélectionnez une chaîne dans la liste pour lancer le direct</p>
+            <p className="text-xs md:text-sm">Sélectionnez une chaîne dans la liste pour afficher l'aperçu</p>
           </div>
         )}
       </div>
