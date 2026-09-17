@@ -57,7 +57,7 @@ export function LiveBrowser() {
     return sortItems(items, sort);
   }, [data, query, sort]);
 
-  // Forcer ext=m3u8 au lieu de ext=ts pour que le lecteur HLS fonctionne
+  // Passage en HLS (.m3u8) pour éviter les blocages du format MPEG-TS (.ts)
   const liveSources = useMemo(() => {
     if (!activeChannel?.stream_id) return [];
     return [`/api/stream?type=live&id=${activeChannel.stream_id}&ext=m3u8`];
