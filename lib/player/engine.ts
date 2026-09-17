@@ -31,12 +31,12 @@ export async function attach(
           url: opts.url,
         },
         {
-          enableStashBuffer: true,           // Amortisseur de débit activé
-          stashInitialSize: 256 * 1024,      // 256 KB au démarrage pour éviter le freeze direct
-          liveBufferLatencyChasing: true,   // Rattrapage progressif du direct
-          liveBufferLatencyMax: 5.0,         // Accepte jusqu'à 5s de retard si le réseau rame
-          liveBufferLatencyMin: 1.5,         // Conserve au moins 1.5s de buffer d'avance
-          autoCleanupSourceBuffer: true,    // Vide la RAM du navigateur en continu
+          enableStashBuffer: true,
+          stashInitialSize: 384 * 1024,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMax: 4.0,
+          liveBufferLatencyMin: 1.0,
+          autoCleanupSourceBuffer: true,
         }
       );
 
