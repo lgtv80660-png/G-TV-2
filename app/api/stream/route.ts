@@ -24,9 +24,13 @@ export async function GET(req: Request) {
   if (!type || !id) return new Response("Bad request", { status: 400 });
 
   const creds = await requireSession();
-  
-  if (type === "live") ext = "ts";
-  else if (ext.toLowerCase() === "mkv") ext = "mp4";
+
+  // Préservation du comportement VOD : Force MP4 sur les conteneurs MKV pour compatibilité web
+  if (type === "live") {
+    ext = "ts";
+  } else if (ext.toLowerCase() === "mkv") {
+    ext = "mp4";
+  }
 
   const targetUrl = buildStreamUrl(creds, type, id, ext);
 
@@ -64,10 +68,21 @@ export async function GET(req: Request) {
           }
 
           const respHeaders = new Headers();
-          respHeaders.set("Content-Type", type === "live" ? "video/mp2t" : "video/mp4");
+          const contentType =
+            type === "live"
+              ? "video/mp2t"
+              : upstreamRes.headers["content-type"] || "video/mp4";
+
+          respHeaders.set("Content-Type", contentType);
           respHeaders.set("Cache-Control", "no-cache, no-store, must-revalidate");
           respHeaders.set("Access-Control-Allow-Origin", "*");
-          respHeaders.set("X-Accel-Buffering", "no");
+
+          if (upstreamRes.headers["content-length"]) {
+            respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
+          }
+          if (upstreamRes.headers["content-range"]) {
+            respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
+          }
 
           const stream = new ReadableStream({
             start(controller) {
@@ -86,12 +101,17 @@ export async function GET(req: Request) {
             },
           });
 
-          resolve(new Response(stream, { status: upstreamRes.statusCode || 200, headers: respHeaders }));
+          resolve(
+            new Response(stream, {
+              status: upstreamRes.statusCode || 200,
+              headers: respHeaders,
+            })
+          );
         }
       );
 
       proxyReq.on("error", (err) => {
-        resolve(new Response(`Direct Stream Error: ${err.message}`, { status: 502 }));
+        resolve(new Response(`Stream Error: ${err.message}`, { status: 502 }));
       });
 
       proxyReq.end();
