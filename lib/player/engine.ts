@@ -29,13 +29,34 @@ export async function attach(
           enableStashBuffer: false,
           stashInitialSize: 0,
           lazyLoad: false,
-          liveBufferLatencyChasing: false,
+          liveBufferLatencyChasing: true,
+          autoCleanupSourceBuffer: true,
+          // Réduis le crash quand le SourceBuffer rencontre des données corrompues
+          accurateSeek: false,
         }
       );
 
       player.attachMediaElement(video);
       player.load();
       player.play().catch(() => {});
+
+      // Interception des erreurs appendBuffer & MediaSource
+      player.on(mpegts.Events.ERROR, (errType: string, errDetail: string) => {
+        // Empêche le crash fatale sur appendBuffer
+        if (
+          errType === mpegts.ErrorTypes.MEDIA_ERROR ||
+          errType === mpegts.ErrorTypes.NETWORK_ERROR ||
+          errDetail?.includes("appendBuffer")
+        ) {
+          try {
+            player.unload();
+            player.detachMediaElement();
+            player.attachMediaElement(video);
+            player.load();
+            player.play().catch(() => {});
+          } catch {}
+        }
+      });
 
       return {
         kind: "mpegts",
