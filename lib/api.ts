@@ -76,9 +76,9 @@ export const api = {
 };
 
 /**
- * Routing du contenu :
- * - Live : Redirige vers /api/hls pour générer la playlist M3U8 avec réécriture des segments vers /api/hlsseg
- * - VOD : Force l'extension 'mp4' sur les conteneurs MKV pour garantir la compatibilité audio web via /api/stream
+ * URL du proxy pour Vercel :
+ * - Live : Redirige vers /api/hls pour découper en segments HLS courts (contourne le timeout Serverless Vercel)
+ * - VOD : Force 'mp4' sur les conteneurs MKV pour convertir l'audio AC-3/EAC-3 en AAC compatible web
  */
 export function streamSrc(kind: StreamKind, id: string | number, ext?: string): string {
   if (kind === "live") {
