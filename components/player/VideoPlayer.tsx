@@ -28,8 +28,6 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
     setError(false);
 
     const rawSourceUrl = sources[0];
-
-    // Utilisation de HLS.js si format m3u8 ou si c'un direct Live
     const isHlsStream = ext === "m3u8" || isLive || rawSourceUrl.includes("ext=m3u8");
 
     if (isHlsStream && Hls.isSupported()) {
@@ -38,7 +36,7 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
         lowLatencyMode: true,
         backBufferLength: 60,
         xhrSetup: (xhr, url) => {
-          // INTERCEPTION : Si un segment .ts pointe vers une ancienne route hls/hlsseg, on redirige vers /api/stream
+          // Interception pour forcer tous les segments TS à passer par /api/stream
           if (url.includes("/api/hls") || url.includes("/api/hlsseg")) {
             const cleanTarget = url.replace(/.*\/api\/(hls|hlsseg)\?url=/, "");
             xhr.open("GET", `/api/stream?url=${cleanTarget}`, true);
@@ -68,7 +66,7 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
         }
       });
     } else {
-      // Fallback natif pour MP4 / MP2T ou Safari
+      // Direct stream pour les VOD / Séries (MP4/MKV)
       video.src = rawSourceUrl;
       video
         .play()
