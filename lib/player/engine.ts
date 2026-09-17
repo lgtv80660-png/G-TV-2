@@ -26,13 +26,19 @@ export async function attach(
           url: opts.url,
         },
         {
-          enableStashBuffer: false,
-          stashInitialSize: 0,
-          lazyLoad: false,
+          // Amortisseur anti-freeze
+          enableStashBuffer: true,
+          stashInitialSize: 512 * 1024,        // 512 KB de buffer initial pour lisser la lecture
+          
+          // Tolérance de latence (évite le saut d'images brutal qui fait sauter le lecteur)
           liveBufferLatencyChasing: true,
+          liveBufferLatencyMax: 6.0,            // Tolère jusqu'à 6s de retard avant de recaler le flux
+          liveBufferLatencyMin: 2.0,            // Conserve 2s de marge de sécurité réseau
+          
+          // Nettoyage mémoire
           autoCleanupSourceBuffer: true,
-          // Réduis le crash quand le SourceBuffer rencontre des données corrompues
-          accurateSeek: false,
+          autoCleanupMaxBackwardDuration: 10,
+          autoCleanupMinBackwardDuration: 5,
         }
       );
 
@@ -40,13 +46,13 @@ export async function attach(
       player.load();
       player.play().catch(() => {});
 
-      // Interception des erreurs appendBuffer & MediaSource
+      // Auto-récupération invisible en cas de freeze ou rupture de paquet TS
       player.on(mpegts.Events.ERROR, (errType: string, errDetail: string) => {
-        // Empêche le crash fatale sur appendBuffer
         if (
           errType === mpegts.ErrorTypes.MEDIA_ERROR ||
           errType === mpegts.ErrorTypes.NETWORK_ERROR ||
-          errDetail?.includes("appendBuffer")
+          errDetail?.includes("appendBuffer") ||
+          errDetail?.includes("SourceBuffer")
         ) {
           try {
             player.unload();
