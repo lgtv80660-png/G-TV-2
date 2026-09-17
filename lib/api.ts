@@ -75,18 +75,9 @@ export const api = {
     getJson<{ epg_listings: EpgListing[] }>(`/api/epg?stream_id=${streamId}&limit=${limit}`),
 };
 
-/**
- * URL du proxy pour Vercel :
- * - Live : Redirige vers /api/hls pour découper en segments HLS courts (contourne le timeout Serverless Vercel)
- * - VOD : Force 'mp4' sur les conteneurs MKV pour convertir l'audio AC-3/EAC-3 en AAC compatible web
- */
 export function streamSrc(kind: StreamKind, id: string | number, ext?: string): string {
-  if (kind === "live") {
-    return `/api/hls?id=${id}`;
-  }
-
-  const vodExt = !ext || ext.toLowerCase() === "mkv" ? "mp4" : ext;
-  return `/api/stream?type=${kind}&id=${id}&ext=${encodeURIComponent(vodExt)}`;
+  const targetExt = kind === "live" ? "ts" : (!ext || ext.toLowerCase() === "mkv" ? "mp4" : ext);
+  return `/api/stream?type=${kind}&id=${id}&ext=${encodeURIComponent(targetExt)}`;
 }
 
 export function transcodeSrc(kind: StreamKind, id: string | number, ext: string): string {
