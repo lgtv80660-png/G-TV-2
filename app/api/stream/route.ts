@@ -9,9 +9,8 @@ export const dynamic = "force-dynamic";
 
 const UA = "VLC/3.0.20 LibVLC/3.0.20";
 
-// Agents HTTP persistants avec débit lissé
-const httpAgent = new http.Agent({ keepAlive: true, timeout: 60000, scheduling: "fifo" });
-const httpsAgent = new https.Agent({ keepAlive: true, timeout: 60000, rejectUnauthorized: false, scheduling: "fifo" });
+const httpAgent = new http.Agent({ keepAlive: true, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, timeout: 60000, rejectUnauthorized: false });
 
 export async function GET(req: Request) {
   try {
@@ -82,33 +81,33 @@ export async function GET(req: Request) {
           respHeaders.set("Access-Control-Allow-Origin", "*");
           respHeaders.set("X-Accel-Buffering", "no");
 
-          if (upstreamRes.headers["content-length"]) {
-            respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
-          }
-          if (upstreamRes.headers["content-range"]) {
-            respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
+          // IMPORTANT: Pour le Live, on NE DOIT PAS transmettre Content-Length ni Content-Range
+          // sinon le lecteur croit que c'est une vidéo avec une durée fixe.
+          if (type !== "live") {
+            if (upstreamRes.headers["content-length"]) {
+              respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
+            }
+            if (upstreamRes.headers["content-range"]) {
+              respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
+            }
           }
 
-          // Bufferisation de 64KB pour éviter de livrer des chunks incomplets au player
-          const stream = new ReadableStream(
-            {
-              start(controller) {
-                upstreamRes.on("data", (chunk) => {
-                  try { controller.enqueue(chunk); } catch {}
-                });
-                upstreamRes.on("end", () => {
-                  try { controller.close(); } catch {}
-                });
-                upstreamRes.on("error", () => {
-                  try { controller.close(); } catch {}
-                });
-              },
-              cancel() {
-                upstreamRes.destroy();
-              },
+          const stream = new ReadableStream({
+            start(controller) {
+              upstreamRes.on("data", (chunk) => {
+                try { controller.enqueue(chunk); } catch {}
+              });
+              upstreamRes.on("end", () => {
+                try { controller.close(); } catch {}
+              });
+              upstreamRes.on("error", () => {
+                try { controller.close(); } catch {}
+              });
             },
-            { highWaterMark: 65536 }
-          );
+            cancel() {
+              upstreamRes.destroy();
+            },
+          });
 
           resolve(
             new Response(stream, {
