@@ -1,4 +1,4 @@
-export type EngineKind = "native" | "hls";
+export type EngineKind = "hls" | "native";
 
 export interface EngineHandle {
   kind: EngineKind;
@@ -9,21 +9,46 @@ export async function attach(
   video: HTMLVideoElement,
   opts: { url: string; ext: string; isLive: boolean }
 ): Promise<EngineHandle> {
-  const u = opts.url.toLowerCase();
+  const Hls = (await import("hls.js")).default;
 
-  // Si c'est un flux HLS (.m3u8)
-  if (u.includes(".m3u8")) {
-    const Hls = (await import("hls.js")).default;
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true });
-      hls.loadSource(opts.url);
-      hls.attachMedia(video);
-      video.play().catch(() => {});
-      return { kind: "hls", destroy: () => hls.destroy() };
-    }
+  // Si HLS est supporté (comme sur Blink Player)
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      backBufferLength: 30,
+      maxBufferLength: 30,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 10,
+    });
+
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal) {
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            hls.startLoad();
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            hls.recoverMediaError();
+            break;
+          default:
+            hls.destroy();
+            break;
+        }
+      }
+    });
+
+    hls.loadSource(opts.url);
+    hls.attachMedia(video);
+    video.play().catch(() => {});
+
+    return {
+      kind: "hls",
+      destroy: () => hls.destroy(),
+    };
   }
 
-  // Pour TOUT le reste (Live TS, VOD MP4) : Passage direct au navigateur
+  // Fallback Safari / iOS (HLS Natif)
   video.src = opts.url;
   video.load();
   video.play().catch(() => {});
