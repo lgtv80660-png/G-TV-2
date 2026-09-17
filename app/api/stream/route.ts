@@ -81,8 +81,7 @@ export async function GET(req: Request) {
           respHeaders.set("Access-Control-Allow-Origin", "*");
           respHeaders.set("X-Accel-Buffering", "no");
 
-          // IMPORTANT: Pour le Live, on NE DOIT PAS transmettre Content-Length ni Content-Range
-          // sinon le lecteur croit que c'est une vidéo avec une durée fixe.
+          // On SUPPRIME Content-Length et Content-Range pour le Live pour éviter la fausse durée fixe (1:03)
           if (type !== "live") {
             if (upstreamRes.headers["content-length"]) {
               respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
