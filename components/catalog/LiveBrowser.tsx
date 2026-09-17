@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect, memo } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { Tv, Maximize, LayoutGrid, ChevronDown, Check, Search } from "lucide-react";
 import { useLiveCategories, useLiveStreams } from "@/lib/hooks";
@@ -8,34 +8,6 @@ import { useUI, DEFAULT_FILTER } from "@/store/ui";
 import { sortItems, cleanName, cn } from "@/lib/utils";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import type { LiveStream } from "@/lib/xtream/types";
-
-// Composant pour isoler la liste et éviter de faire re-rendre le lecteur vidéo
-const ChannelItem = memo(function ChannelItem({
-  channel,
-  isActive,
-  onSelect,
-}: {
-  channel: LiveStream;
-  isActive: boolean;
-  onSelect: (c: LiveStream) => void;
-}) {
-  return (
-    <button
-      onClick={() => onSelect(channel)}
-      className={cn(
-        "w-full flex items-center gap-3 p-2 rounded-lg transition-colors text-left",
-        isActive ? "bg-ink-800 border border-iris-500/30" : "hover:bg-ink-850"
-      )}
-    >
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-ink-950 overflow-hidden border border-white/5">
-        <Tv className="h-5 w-5 text-fog-600" />
-      </div>
-      <span className="truncate text-sm font-medium text-fog-200 flex-1">
-        {cleanName(channel.name)}
-      </span>
-    </button>
-  );
-});
 
 export function LiveBrowser() {
   const { data: allCats = [] } = useLiveCategories();
@@ -85,16 +57,15 @@ export function LiveBrowser() {
     return sortItems(items, sort);
   }, [data, query, sort]);
 
-  // STABILISATION : URL figée en mémoire pour éviter le re-render vidéo parasite
+  // Forcer ext=m3u8 au lieu de ext=ts pour que le lecteur HLS fonctionne
   const liveSources = useMemo(() => {
     if (!activeChannel?.stream_id) return [];
-    return [`/api/stream?type=live&id=${activeChannel.stream_id}&ext=ts`];
-  }, [activeChannel?.stream_id]);
+    return [`/api/stream?type=live&id=${activeChannel.stream_id}&ext=m3u8`];
+  }, [activeChannel]);
 
-  const watchDedicatedUrl = useMemo(() => {
-    if (!activeChannel) return "#";
-    return `/watch?type=live&id=${activeChannel.stream_id}&ext=ts&title=${encodeURIComponent(cleanName(activeChannel.name))}`;
-  }, [activeChannel?.stream_id, activeChannel?.name]);
+  const watchDedicatedUrl = activeChannel
+    ? `/watch?type=live&id=${activeChannel.stream_id}&ext=m3u8&title=${encodeURIComponent(cleanName(activeChannel.name))}`
+    : "#";
 
   return (
     <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-80px)] w-full overflow-hidden border-t border-white/5">
@@ -202,18 +173,25 @@ export function LiveBrowser() {
             <p className="text-center text-sm text-fog-500 mt-10">Aucune chaîne</p>
           ) : (
             filtered.map((c) => (
-              <ChannelItem
+              <button
                 key={c.stream_id}
-                channel={c}
-                isActive={activeChannel?.stream_id === c.stream_id}
-                onSelect={setActiveChannel}
-              />
+                onClick={() => setActiveChannel(c)}
+                className={cn(
+                  "w-full flex items-center gap-3 p-2 rounded-lg transition-colors text-left",
+                  activeChannel?.stream_id === c.stream_id ? "bg-ink-800 border border-iris-500/30" : "hover:bg-ink-850"
+                )}
+              >
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-ink-950 overflow-hidden border border-white/5">
+                  <Tv className="h-5 w-5 text-fog-600" />
+                </div>
+                <span className="truncate text-sm font-medium text-fog-200 flex-1">{cleanName(c.name)}</span>
+              </button>
             ))
           )}
         </div>
       </div>
 
-      {/* Colonne 3: Zone du Lecteur (Isolée de tout Re-render) */}
+      {/* Colonne 3: Zone du Lecteur */}
       <div className="flex-1 bg-ink-950 flex flex-col items-center justify-center p-4 md:p-6 overflow-hidden">
         {activeChannel ? (
           <div className="w-full max-w-5xl flex flex-col items-center justify-center space-y-4">
@@ -221,7 +199,7 @@ export function LiveBrowser() {
               <VideoPlayer
                 key={activeChannel.stream_id}
                 sources={liveSources}
-                ext="ts"
+                ext="m3u8"
                 isLive={true}
                 title={cleanName(activeChannel.name)}
               />
