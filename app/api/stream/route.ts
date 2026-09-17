@@ -25,7 +25,6 @@ export async function GET(req: Request) {
 
   const creds = await requireSession();
 
-  // Préservation du comportement VOD : Force MP4 sur les conteneurs MKV pour compatibilité web
   if (type === "live") {
     ext = "ts";
   } else if (ext.toLowerCase() === "mkv") {
