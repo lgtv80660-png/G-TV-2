@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
 
 const UA = "VLC/3.0.20 LibVLC/3.0.20";
 
+// Agents HTTP persistants avec débit lissé
+const httpAgent = new http.Agent({ keepAlive: true, timeout: 60000, scheduling: "fifo" });
+const httpsAgent = new https.Agent({ keepAlive: true, timeout: 60000, rejectUnauthorized: false, scheduling: "fifo" });
+
 export async function GET(req: Request) {
   try {
     await requireSession();
@@ -42,6 +46,7 @@ export async function GET(req: Request) {
       const headers: Record<string, string> = {
         "User-Agent": UA,
         Accept: "*/*",
+        Connection: "keep-alive",
       };
 
       const range = req.headers.get("range");
@@ -54,7 +59,7 @@ export async function GET(req: Request) {
           path: parsed.pathname + parsed.search,
           method: "GET",
           headers,
-          rejectUnauthorized: false,
+          agent: isHttps ? httpsAgent : httpAgent,
         },
         (upstreamRes) => {
           if (
@@ -75,6 +80,7 @@ export async function GET(req: Request) {
           respHeaders.set("Content-Type", contentType);
           respHeaders.set("Cache-Control", "no-cache, no-store, must-revalidate");
           respHeaders.set("Access-Control-Allow-Origin", "*");
+          respHeaders.set("X-Accel-Buffering", "no");
 
           if (upstreamRes.headers["content-length"]) {
             respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
@@ -83,22 +89,26 @@ export async function GET(req: Request) {
             respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
           }
 
-          const stream = new ReadableStream({
-            start(controller) {
-              upstreamRes.on("data", (chunk) => {
-                try { controller.enqueue(chunk); } catch {}
-              });
-              upstreamRes.on("end", () => {
-                try { controller.close(); } catch {}
-              });
-              upstreamRes.on("error", () => {
-                try { controller.close(); } catch {}
-              });
+          // Bufferisation de 64KB pour éviter de livrer des chunks incomplets au player
+          const stream = new ReadableStream(
+            {
+              start(controller) {
+                upstreamRes.on("data", (chunk) => {
+                  try { controller.enqueue(chunk); } catch {}
+                });
+                upstreamRes.on("end", () => {
+                  try { controller.close(); } catch {}
+                });
+                upstreamRes.on("error", () => {
+                  try { controller.close(); } catch {}
+                });
+              },
+              cancel() {
+                upstreamRes.destroy();
+              },
             },
-            cancel() {
-              upstreamRes.destroy();
-            },
-          });
+            { highWaterMark: 65536 }
+          );
 
           resolve(
             new Response(stream, {
