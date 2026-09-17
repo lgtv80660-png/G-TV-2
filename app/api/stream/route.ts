@@ -1,17 +1,24 @@
 import { requireSession } from "@/lib/session";
 import { buildStreamUrl } from "@/lib/xtream/urls";
+import { locatePlayable } from "@/lib/xtream/locate";
 import type { StreamKind } from "@/lib/xtream/types";
-import http from "http";
-import https from "https";
 
 export const runtime = "nodejs";
+// Streaming responses must not be statically optimized / buffered.
 export const dynamic = "force-dynamic";
 
-const UA = "VLC/3.0.20 LibVLC/3.0.20";
+const UA = "VLC/3.0.20 LibVLC/3.0.20"; // many providers gate on a player-like UA
 
+/**
+ * Media proxy. Builds the real provider URL from the session creds and pipes
+ * bytes back to the browser, forwarding Range requests so VOD seeking works.
+ *   /api/stream?type=movie&id=123&ext=mp4
+ *   /api/stream?type=live&id=456&ext=ts
+ */
 export async function GET(req: Request) {
+  let creds;
   try {
-    await requireSession();
+    creds = await requireSession();
   } catch {
     return new Response("Not authenticated", { status: 401 });
   }
@@ -19,114 +26,75 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") as StreamKind | null;
   const id = searchParams.get("id");
-  let ext = searchParams.get("ext") || "ts";
+  const ext = searchParams.get("ext") || "ts";
 
-  if (!type || !id) return new Response("Bad request", { status: 400 });
-
-  const creds = await requireSession();
-
-  // Si c'est un Live et que ext=m3u8 est demandé, on GARDE m3u8
-  if (type === "live") {
-    if (ext !== "m3u8") ext = "ts";
-  } else if (ext.toLowerCase() === "mkv") {
-    ext = "mp4";
+  if (!type || !id || !["live", "movie", "series"].includes(type)) {
+    return new Response("Bad stream request", { status: 400 });
   }
 
-  const targetUrl = buildStreamUrl(creds, type, id, ext);
-
-  return new Promise<Response>((resolve) => {
-    try {
-      const parsed = new URL(targetUrl);
-      const isHttps = parsed.protocol === "https:";
-      const client = isHttps ? https : http;
-
-      const headers: Record<string, string> = {
-        "User-Agent": UA,
-        Accept: "*/*",
-      };
-
-      const range = req.headers.get("range");
-      if (range) headers["Range"] = range;
-
-      const proxyReq = client.request(
-        {
-          hostname: parsed.hostname,
-          port: parsed.port || (isHttps ? 443 : 80),
-          path: parsed.pathname + parsed.search,
-          method: "GET",
-          headers,
-          rejectUnauthorized: false,
-        },
-        (upstreamRes) => {
-          if (
-            upstreamRes.statusCode &&
-            [301, 302, 303, 307, 308].includes(upstreamRes.statusCode) &&
-            upstreamRes.headers.location
-          ) {
-            const nextUrl = new URL(upstreamRes.headers.location, targetUrl).toString();
-            return resolve(fetch(nextUrl, { headers: { "User-Agent": UA } }));
-          }
-
-          // Définition du Content-Type adapté pour le manifeste HLS (.m3u8) ou la VOD
-          const contentType =
-            type === "live" && ext === "m3u8"
-              ? "application/vnd.apple.mpegurl"
-              : type === "live"
-              ? "video/mp2t"
-              : "video/mp4";
-
-          const respHeaders = new Headers();
-          respHeaders.set("Content-Type", contentType);
-          respHeaders.set("Cache-Control", "no-cache, no-store, must-revalidate");
-          respHeaders.set("Access-Control-Allow-Origin", "*");
-          respHeaders.set("X-Accel-Buffering", "no");
-
-          if (upstreamRes.headers["content-length"]) {
-            respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
-          }
-          if (upstreamRes.headers["content-range"]) {
-            respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
-          }
-
-          const stream = new ReadableStream({
-            start(controller) {
-              upstreamRes.on("data", (chunk) => {
-                try {
-                  controller.enqueue(chunk);
-                } catch {}
-              });
-              upstreamRes.on("end", () => {
-                try {
-                  controller.close();
-                } catch {}
-              });
-              upstreamRes.on("error", () => {
-                try {
-                  controller.close();
-                } catch {}
-              });
-            },
-            cancel() {
-              upstreamRes.destroy();
-            },
-          });
-
-          resolve(
-            new Response(stream, {
-              status: upstreamRes.statusCode || 200,
-              headers: respHeaders,
-            })
-          );
-        }
-      );
-
-      proxyReq.on("error", (err) => {
-        resolve(new Response(`Direct Stream Error: ${err.message}`, { status: 502 }));
+  // For VOD/series the catalog's extension is often wrong (provider returns an
+  // HTML error page). Find the real container; bail clearly if none is playable.
+  let upstreamUrl = buildStreamUrl(creds, type, id, ext);
+  if (type !== "live") {
+    const located = await locatePlayable(creds, type, id, ext);
+    if (!located) {
+      console.log(`[STREAM] ${type}/${id} UNAVAILABLE (no playable container)`);
+      return new Response("Title unavailable from provider", {
+        status: 404,
+        headers: { "x-G-Player-unavailable": "1" },
       });
-
-      proxyReq.end();
-    } catch (err: any) {
-      resolve(new Response(`Fatal Error: ${err.message}`, { status: 500 }));
     }
+    upstreamUrl = located.url;
+  }
+
+  const headers: Record<string, string> = { "User-Agent": UA, Accept: "*/*" };
+  const range = req.headers.get("range");
+  if (range) headers["Range"] = range;
+
+  const t0 = Date.now();
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl, {
+      headers,
+      redirect: "follow",
+      // @ts-expect-error - undici option, allows half-duplex streaming
+      duplex: "half",
+      signal: req.signal,
+    });
+  } catch (err) {
+    console.log(`[STREAM] ${type}/${id} PROXY upstream FETCH FAILED after ${Date.now() - t0}ms: ${(err as Error).message}`);
+    return new Response(`Upstream fetch failed: ${(err as Error).message}`, { status: 502 });
+  }
+  console.log(
+    `[STREAM] ${type}/${id} PROXY status=${upstream.status} ttfb=${Date.now() - t0}ms range=${range || "none"} ct=${upstream.headers.get("content-type") || "?"}`,
+  );
+
+  if (!upstream.ok && upstream.status !== 206) {
+    return new Response(`Upstream returned ${upstream.status}`, { status: upstream.status });
+  }
+
+  const respHeaders = new Headers();
+  const passthrough = [
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "content-disposition",
+  ];
+  for (const h of passthrough) {
+    const v = upstream.headers.get(h);
+    if (v) respHeaders.set(h, v);
+  }
+  if (!respHeaders.has("content-type")) {
+    respHeaders.set("content-type", type === "live" ? "video/mp2t" : "video/mp4");
+  }
+  if (!respHeaders.has("accept-ranges") && type !== "live") {
+    respHeaders.set("accept-ranges", "bytes");
+  }
+  respHeaders.set("cache-control", "no-store");
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: respHeaders,
   });
 }
