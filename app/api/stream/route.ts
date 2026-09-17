@@ -19,23 +19,17 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") as StreamKind | null;
   const id = searchParams.get("id");
-  let requestedExt = searchParams.get("ext");
+  let ext = searchParams.get("ext") || "ts";
 
   if (!type || !id) return new Response("Bad request", { status: 400 });
 
   const creds = await requireSession();
 
-  // Détermination stricte des extensions selon le type
-  let ext = "mp4";
+  // Si c'est un Live et que ext=m3u8 est demandé, on GARDE m3u8
   if (type === "live") {
-    ext = requestedExt === "ts" ? "ts" : "m3u8";
-  } else {
-    // Pour movies et series, on utilise mp4 (ou la valeur explicite demandée)
-    if (requestedExt && requestedExt.toLowerCase() !== "m3u8") {
-      ext = requestedExt.toLowerCase() === "mkv" ? "mp4" : requestedExt;
-    } else {
-      ext = "mp4";
-    }
+    if (ext !== "m3u8") ext = "ts";
+  } else if (ext.toLowerCase() === "mkv") {
+    ext = "mp4";
   }
 
   const targetUrl = buildStreamUrl(creds, type, id, ext);
@@ -73,13 +67,13 @@ export async function GET(req: Request) {
             return resolve(fetch(nextUrl, { headers: { "User-Agent": UA } }));
           }
 
-          // Attribution rigoureuse du Content-Type
-          let contentType = "video/mp4";
-          if (type === "live") {
-            contentType = ext === "m3u8" ? "application/vnd.apple.mpegurl" : "video/mp2t";
-          } else {
-            contentType = upstreamRes.headers["content-type"] || "video/mp4";
-          }
+          // Définition du Content-Type adapté pour le manifeste HLS (.m3u8) ou la VOD
+          const contentType =
+            type === "live" && ext === "m3u8"
+              ? "application/vnd.apple.mpegurl"
+              : type === "live"
+              ? "video/mp2t"
+              : "video/mp4";
 
           const respHeaders = new Headers();
           respHeaders.set("Content-Type", contentType);
