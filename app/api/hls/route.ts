@@ -35,7 +35,6 @@ export async function GET(req: Request) {
     const session = registerHlsSession(id, upstreamUrl);
     const playlistText = await upstreamRes.text();
 
-    // Réécriture dynamique de chaque ligne de segment vers /api/hlsseg
     const rewritten = playlistText.replace(/^(?!#)(.+)$/gm, (line) => {
       const trimmed = line.trim();
       if (!trimmed) return line;
