@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { attach, type EngineHandle } from "@/lib/player/engine";
+import Hls from "hls.js";
 import { Loader2 } from "lucide-react";
 
 interface VideoPlayerProps {
@@ -19,36 +19,66 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !sources.length) return;
+    if (!video || !sources.length || !sources[0]) return;
 
-    let handle: EngineHandle | null = null;
+    let hlsInstance: Hls | null = null;
     let isMounted = true;
 
     setLoading(true);
     setError(false);
 
-    const initPlayer = async () => {
-      try {
-        handle = await attach(video, {
-          url: sources[0],
-          ext,
-          isLive,
-        });
+    const rawSourceUrl = sources[0];
 
-        if (!isMounted) {
-          handle?.destroy();
-          return;
+    // Utilisation de HLS.js si format m3u8 ou si c'un direct Live
+    const isHlsStream = ext === "m3u8" || isLive || rawSourceUrl.includes("ext=m3u8");
+
+    if (isHlsStream && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 60,
+        xhrSetup: (xhr, url) => {
+          // INTERCEPTION : Si un segment .ts pointe vers une ancienne route hls/hlsseg, on redirige vers /api/stream
+          if (url.includes("/api/hls") || url.includes("/api/hlsseg")) {
+            const cleanTarget = url.replace(/.*\/api\/(hls|hlsseg)\?url=/, "");
+            xhr.open("GET", `/api/stream?url=${cleanTarget}`, true);
+          }
+        },
+      });
+
+      hlsInstance = hls;
+      hls.loadSource(rawSourceUrl);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (isMounted) {
+          setLoading(false);
+          video.play().catch(() => {});
         }
+      });
 
-        video.play().catch(() => {});
-      } catch (err) {
-        if (isMounted) setError(true);
-      }
-    };
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (isMounted) {
+            setLoading(false);
+            setError(true);
+          }
+        }
+      });
+    } else {
+      // Fallback natif pour MP4 / MP2T ou Safari
+      video.src = rawSourceUrl;
+      video
+        .play()
+        .then(() => {
+          if (isMounted) setLoading(false);
+        })
+        .catch(() => {});
+    }
 
-    initPlayer();
-
-    const handleCanPlay = () => setLoading(false);
+    const handleCanPlay = () => isMounted && setLoading(false);
     const handleError = () => {
       if (isMounted) {
         setLoading(false);
@@ -65,7 +95,10 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
       video.removeEventListener("canplay", handleCanPlay);
       video.removeEventListener("playing", handleCanPlay);
       video.removeEventListener("error", handleError);
-      if (handle) handle.destroy();
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+      }
     };
   }, [sources, ext, isLive]);
 
