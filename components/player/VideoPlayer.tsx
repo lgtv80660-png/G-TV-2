@@ -1,3 +1,4 @@
+// components/player/VideoPlayer.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -27,30 +28,17 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
     setLoading(true);
     setError(false);
 
-    const rawSourceUrl = sources[0];
-    const isHlsStream = ext === "m3u8" || isLive || rawSourceUrl.includes("ext=m3u8");
+    const streamUrl = sources[0];
+    const isHls = isLive || ext === "m3u8" || streamUrl.includes("ext=m3u8");
 
-    if (isHlsStream && Hls.isSupported()) {
+    if (isHls && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        backBufferLength: 60,
-        // CORRECTION CLÉ : Forcer hls.js à faire passer TOUS les segments .ts par le proxy /api/stream
-        xhrSetup: (xhr, url) => {
-          // Si l'URL demandée ne pointe pas déjà vers /api/stream, on la réécrit
-          if (!url.includes("/api/stream")) {
-            // Extraction de l'URL cible
-            let cleanUrl = url;
-            if (url.includes("/api/hls")) {
-              cleanUrl = url.replace(/.*\/api\/(hls|hlsseg)\?url=/, "");
-            }
-            xhr.open("GET", `/api/stream?url=${encodeURIComponent(cleanUrl)}`, true);
-          }
-        },
       });
 
       hlsInstance = hls;
-      hls.loadSource(rawSourceUrl);
+      hls.loadSource(streamUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -71,8 +59,8 @@ export function VideoPlayer({ sources, ext = "mp4", isLive = false, poster }: Vi
         }
       });
     } else {
-      // Direct stream pour VOD / Séries
-      video.src = rawSourceUrl;
+      // Pour Safari natif ou VOD/Séries (MP4)
+      video.src = streamUrl;
       video
         .play()
         .then(() => {
