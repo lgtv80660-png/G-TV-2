@@ -21,7 +21,6 @@ export async function attach(
 ): Promise<EngineHandle> {
   const kind = pickEngine(opts.url, opts.ext, opts.isLive);
 
-  // Moteur MSE Live (Laisse le flux brut du fournisseur, demux en mémoire browser)
   if (kind === "mpegts") {
     const mpegts = (await import("mpegts.js")).default;
     if (mpegts.getFeatureList().mseLivePlayback || mpegts.isSupported()) {
@@ -32,11 +31,12 @@ export async function attach(
           url: opts.url,
         },
         {
-          enableStashBuffer: false,        // Pas de stockage serveur/buffer
-          stashInitialSize: 0,              // Démarrage instantané
-          lazyLoad: false,
-          liveBufferLatencyChasing: true,  // Garde le direct parfait
-          autoCleanupSourceBuffer: true,   // Libère la RAM en continu
+          enableStashBuffer: true,           // Amortisseur de débit activé
+          stashInitialSize: 256 * 1024,      // 256 KB au démarrage pour éviter le freeze direct
+          liveBufferLatencyChasing: true,   // Rattrapage progressif du direct
+          liveBufferLatencyMax: 5.0,         // Accepte jusqu'à 5s de retard si le réseau rame
+          liveBufferLatencyMin: 1.5,         // Conserve au moins 1.5s de buffer d'avance
+          autoCleanupSourceBuffer: true,    // Vide la RAM du navigateur en continu
         }
       );
 
@@ -57,7 +57,6 @@ export async function attach(
     }
   }
 
-  // Fallback HLS (pour playlists M3U8 VOD/Séries si besoin)
   if (kind === "hls") {
     const Hls = (await import("hls.js")).default;
     if (Hls.isSupported()) {
@@ -69,7 +68,6 @@ export async function attach(
     }
   }
 
-  // Native MP4 pour VOD & Films
   video.src = opts.url;
   video.load();
   video.play().catch(() => {});
