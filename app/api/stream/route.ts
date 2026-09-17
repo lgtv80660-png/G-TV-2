@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") as StreamKind | null;
   const id = searchParams.get("id");
-  let ext = searchParams.get("ext") || "ts";
+  let ext = searchParams.get("ext") || "m3u8";
 
   if (!type || !id) return new Response("Bad request", { status: 400 });
 
@@ -103,7 +103,12 @@ export async function GET(req: Request) {
             },
           });
 
-          resolve(new Response(stream, { status: upstreamRes.statusCode || 200, headers: respHeaders }));
+          resolve(
+            new Response(stream, {
+              status: upstreamRes.statusCode || 200,
+              headers: respHeaders,
+            })
+          );
         }
       );
 
