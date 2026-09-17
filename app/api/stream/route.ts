@@ -16,16 +16,22 @@ export async function GET(req: Request) {
     return new Response("Not authenticated", { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
+  const { searchParams, origin } = new URL(req.url);
   const type = searchParams.get("type") as StreamKind | null;
   const id = searchParams.get("id");
   let ext = searchParams.get("ext") || "ts";
-
-  if (!type || !id) return new Response("Bad request", { status: 400 });
+  const directUrl = searchParams.get("url");
 
   const creds = await requireSession();
 
-  // Si c'est un Live et que ext=m3u8 est demandé, on GARDE m3u8
+  // 1. Si on demande une URL directe (segment .ts interne au manifeste)
+  if (directUrl) {
+    return fetchUpstream(directUrl, req);
+  }
+
+  if (!type || !id) return new Response("Bad request", { status: 400 });
+
+  // Forcer m3u8 si c'est du live
   if (type === "live") {
     if (ext !== "m3u8") ext = "ts";
   } else if (ext.toLowerCase() === "mkv") {
@@ -34,6 +40,54 @@ export async function GET(req: Request) {
 
   const targetUrl = buildStreamUrl(creds, type, id, ext);
 
+  // 2. Traitement spécifique des playlists .m3u8 pour le Live
+  if (type === "live" && ext === "m3u8") {
+    try {
+      const res = await fetch(targetUrl, {
+        headers: { "User-Agent": UA },
+      });
+
+      if (!res.ok) {
+        return new Response(`Upstream HLS Error: ${res.statusText}`, { status: res.status });
+      }
+
+      let m3u8Text = await res.text();
+      const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
+
+      // Réécriture des URLs relatives/absolues des segments .ts du fichier m3u8
+      const rewrittenM3u8 = m3u8Text
+        .split("\n")
+        .map((line) => {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) return line;
+
+          let segmentUrl = trimmed;
+          if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            segmentUrl = new URL(trimmed, baseUrl).toString();
+          }
+
+          return `${origin}/api/stream?url=${encodeURIComponent(segmentUrl)}`;
+        })
+        .join("\n");
+
+      return new Response(rewrittenM3u8, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/vnd.apple.mpegurl",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    } catch (err: any) {
+      return new Response(`Manifest Error: ${err.message}`, { status: 500 });
+    }
+  }
+
+  // 3. Traitement standard des flux (VOD, TS direct)
+  return fetchUpstream(targetUrl, req);
+}
+
+async function fetchUpstream(targetUrl: string, req: Request) {
   return new Promise<Response>((resolve) => {
     try {
       const parsed = new URL(targetUrl);
@@ -64,19 +118,11 @@ export async function GET(req: Request) {
             upstreamRes.headers.location
           ) {
             const nextUrl = new URL(upstreamRes.headers.location, targetUrl).toString();
-            return resolve(fetch(nextUrl, { headers: { "User-Agent": UA } }));
+            return resolve(fetchUpstream(nextUrl, req));
           }
 
-          // Définition du Content-Type adapté pour le manifeste HLS (.m3u8) ou la VOD
-          const contentType =
-            type === "live" && ext === "m3u8"
-              ? "application/vnd.apple.mpegurl"
-              : type === "live"
-              ? "video/mp2t"
-              : "video/mp4";
-
           const respHeaders = new Headers();
-          respHeaders.set("Content-Type", contentType);
+          respHeaders.set("Content-Type", upstreamRes.headers["content-type"] || "video/mp2t");
           respHeaders.set("Cache-Control", "no-cache, no-store, must-revalidate");
           respHeaders.set("Access-Control-Allow-Origin", "*");
           respHeaders.set("X-Accel-Buffering", "no");
@@ -84,26 +130,17 @@ export async function GET(req: Request) {
           if (upstreamRes.headers["content-length"]) {
             respHeaders.set("Content-Length", upstreamRes.headers["content-length"]);
           }
-          if (upstreamRes.headers["content-range"]) {
-            respHeaders.set("Content-Range", upstreamRes.headers["content-range"]);
-          }
 
           const stream = new ReadableStream({
             start(controller) {
               upstreamRes.on("data", (chunk) => {
-                try {
-                  controller.enqueue(chunk);
-                } catch {}
+                try { controller.enqueue(chunk); } catch {}
               });
               upstreamRes.on("end", () => {
-                try {
-                  controller.close();
-                } catch {}
+                try { controller.close(); } catch {}
               });
               upstreamRes.on("error", () => {
-                try {
-                  controller.close();
-                } catch {}
+                try { controller.close(); } catch {}
               });
             },
             cancel() {
@@ -111,17 +148,12 @@ export async function GET(req: Request) {
             },
           });
 
-          resolve(
-            new Response(stream, {
-              status: upstreamRes.statusCode || 200,
-              headers: respHeaders,
-            })
-          );
+          resolve(new Response(stream, { status: upstreamRes.statusCode || 200, headers: respHeaders }));
         }
       );
 
       proxyReq.on("error", (err) => {
-        resolve(new Response(`Direct Stream Error: ${err.message}`, { status: 502 }));
+        resolve(new Response(`Proxy Stream Error: ${err.message}`, { status: 502 }));
       });
 
       proxyReq.end();
